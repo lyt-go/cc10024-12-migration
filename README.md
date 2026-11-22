@@ -77,5 +77,29 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 快照归档迁移
+
+页面快照由旧版单JSON（`data/snapshots/page_*.json`，视为格式版本1）迁移为
+带格式版本的压缩快照档案（`page_*.snapgz`，格式版本2，gzip压缩信封：
+`format / format_version / snapshot_id / content_level / origin / payload`）。
+
+- `app/snapshot_archive.py`：归档格式读写。先写 `.inprogress-*` 临时文件再
+  `os.replace` 原子提交，写入中的档案对读取方不可见。
+- `app/snapshot_repository.py`：归并读取视图。同一快照的两份物理档案按
+  `snapshot_id` 归并去重；仅有预览的旧数据仍按 preview 层级读取；旧报告里的
+  旧文件名/档案名/裸ID引用在迁移后都可解析；`verify_writes()` 把迁移写入与
+  采集写入按来源分开核对。
+- `app/snapshot_migration.py`：迁移任务。幂等（已完成跳过）、失败可重试
+  （`retry_failed`），状态记录在 `migration_manifest.json` / `migration_journal.jsonl`，
+  不删除旧文件。
+- `run_history` 确认完成时从归档环境查询同批有效页面并固定本次运行的页面集合
+  （`runs/run_<id>_pages.json`），之后的迁移进度、新到批次、写入中档案的提交
+  都不改变该集合；`rerun_dedup(run_id)` 按固定集合重跑去重，
+  `validate_snapshot_reads()` 在归档环境切换后校验旧快照读取依赖。
+
+验证：`cd backend && .venv/bin/python tests/test_snapshot_migration.py`
+（7个场景：压缩格式、预览层级、写入中档案、双档案归并、迁移中途运行确认、
+失败重试、旧报告引用）。
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA
